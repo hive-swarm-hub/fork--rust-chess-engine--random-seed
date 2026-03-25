@@ -842,9 +842,15 @@ impl RustAlphaBetaEngine {
             return Some(terminal_score);
         }
 
+        // Max ply limit to prevent search explosions
+        if ply >= 96 {
+            return Some(self.evaluate(board));
+        }
+
         let in_check_now = in_check(board);
         let mut effective_depth = depth;
-        if in_check_now {
+        // Cap check extension to prevent infinite check sequences
+        if in_check_now && ply < 80 {
             effective_depth += 1;
         }
 
@@ -1439,7 +1445,11 @@ impl RustAlphaBetaEngine {
             BoardStatus::Checkmate => Some(-MATE_SCORE + ply as i32),
             BoardStatus::Stalemate => Some(DRAW_SCORE),
             BoardStatus::Ongoing => {
-                if repetition.count(board_hash(board)) >= 3 {
+                let rep_count = repetition.count(board_hash(board));
+                if rep_count >= 3 {
+                    Some(DRAW_SCORE)
+                } else if rep_count >= 2 && ply > 0 {
+                    // 2-fold repetition in search = likely draw, treat as draw
                     Some(DRAW_SCORE)
                 } else {
                     None
