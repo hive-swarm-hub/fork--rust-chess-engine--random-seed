@@ -197,9 +197,9 @@ const THREAT_QUEEN_BY_ROOK: i32 = 25;
 const PASSED_PAWN_BONUS: [i32; 8] = [0, 8, 12, 20, 35, 60, 90, 0];
 const ENDGAME_PASSED_PAWN_BONUS: [i32; 8] = [0, 0, 4, 8, 16, 32, 56, 0];
 const SUPPORTED_PASSED_PAWN_BONUS: [i32; 8] = [0, 0, 3, 6, 12, 20, 32, 0];
-const REVERSE_FUTILITY_MARGIN: [i32; 5] = [0, 85, 150, 235, 320];
-const FUTILITY_MARGIN: [i32; 5] = [0, 100, 170, 260, 350];
-const RAZOR_MARGIN: [i32; 4] = [0, 250, 380, 520];
+const REVERSE_FUTILITY_MARGIN: [i32; 5] = [0, 75, 140, 225, 310];
+const FUTILITY_MARGIN: [i32; 5] = [0, 90, 155, 245, 340];
+const RAZOR_MARGIN: [i32; 4] = [0, 230, 360, 500];
 
 // Contempt: slight penalty for draws when we likely have advantage
 const CONTEMPT: i32 = 12;
@@ -2034,11 +2034,12 @@ fn late_move_reduction(depth: i32, move_count: usize) -> i32 {
 
 fn late_move_pruning_limit(depth: i32) -> usize {
     match depth {
-        d if d <= 1 => 9,
-        2 => 14,
-        3 => 22,
-        4 => 32,
-        5 => 45,
+        d if d <= 1 => 5,
+        2 => 9,
+        3 => 14,
+        4 => 20,
+        5 => 28,
+        6 => 38,
         _ => usize::MAX,
     }
 }
