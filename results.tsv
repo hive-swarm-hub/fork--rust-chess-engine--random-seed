@@ -6,3 +6,6 @@ ea31f6f	2369.5	10	discard	eval: stronger passed pawns, rook behind passed pawn, 
 1e7f2e9	2369.5	10	discard	expanded EPD book + 4M TT (regressed -256 ELO, TT cache pressure)
 2b987ed	2625.5	10	discard	expanded EPD book only, TT at 2M (equal, confirms 4M TT was exp #5 culprit)
 d9a81d9	2760.4	10	keep	aggressive LMP tuning + tighter futility/razor margins (+135 ELO, depth 15 in 2s)
+ea4c1a5	2539.9	10	discard	LMR 2.25->2.10 + EPD book + SEE 80->95 (regressed -220, LMR too aggressive)
+dbe6923	2369.5	10	discard	null move reduction 3+depth/4 (regressed -391, way too aggressive)
+9865f67	2800.0	10	keep	extend LMP to depth 7-8 (50/65) + tighten depth 1 (5->4). PERFECT 10-0!

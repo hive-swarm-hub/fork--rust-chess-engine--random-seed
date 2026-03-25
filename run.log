@@ -20,15 +20,15 @@ Finished game 6 (SF_2200 vs HiveChess): 0-1 {Black mates}
 Started game 7 of 10 (HiveChess vs SF_2300)
 Finished game 7 (HiveChess vs SF_2300): 1-0 {White mates}
 Started game 8 of 10 (SF_2300 vs HiveChess)
-Finished game 8 (SF_2300 vs HiveChess): 1/2-1/2 {Draw by fifty moves rule}
+Finished game 8 (SF_2300 vs HiveChess): 0-1 {Black mates}
 Started game 9 of 10 (HiveChess vs SF_2400)
 Finished game 9 (HiveChess vs SF_2400): 1-0 {White mates}
 Started game 10 of 10 (SF_2400 vs HiveChess)
 Finished game 10 (SF_2400 vs HiveChess): 0-1 {Black mates}
 Rank Name                          Elo     +/-   Games   Score    Draw 
-   0 HiveChess                     512     nan      10   95.0%   10.0% 
-   1 SF_2300                      -191     nan       2   25.0%   50.0% 
-   2 SF_2400                      -inf     nan       2    0.0%    0.0% 
+   0 HiveChess                     inf     nan      10  100.0%    0.0% 
+   1 SF_2400                      -inf     nan       2    0.0%    0.0% 
+   2 SF_2300                      -inf     nan       2    0.0%    0.0% 
    3 SF_2200                      -inf     nan       2    0.0%    0.0% 
    4 SF_2100                      -inf     nan       2    0.0%    0.0% 
    5 SF_2000                      -inf     nan       2    0.0%    0.0% 
@@ -36,8 +36,7 @@ Rank Name                          Elo     +/-   Games   Score    Draw
 SPRT: llr 0 (0.0%), lbound -inf, ubound inf
 
 Player: HiveChess
-   "Draw by fifty moves rule": 1
-   "Win: Black mates": 4
+   "Win: Black mates": 5
    "Win: White mates": 5
 Player: SF_2000
    "Loss: Black mates": 1
@@ -49,35 +48,35 @@ Player: SF_2200
    "Loss: Black mates": 1
    "Loss: White mates": 1
 Player: SF_2300
-   "Draw by fifty moves rule": 1
+   "Loss: Black mates": 1
    "Loss: White mates": 1
 Player: SF_2400
    "Loss: Black mates": 1
    "Loss: White mates": 1
 Finished match
 Computing ELO...
-elo: 2760.4
+elo: 2800.0
 games_played: 10
-score_pct: 0.950
-total_wins: 9
-total_draws: 1
+score_pct: 1.000
+total_wins: 10
+total_draws: 0
 total_losses: 0
-ci_95: 500.8
+ci_95: 784.0
 
 Per-opponent breakdown:
   vs SF_2000 (2000): +2 =0 -0 [1.000]
   vs SF_2100 (2100): +2 =0 -0 [1.000]
   vs SF_2200 (2200): +2 =0 -0 [1.000]
-  vs SF_2300 (2300): +1 =1 -0 [0.750]
+  vs SF_2300 (2300): +2 =0 -0 [1.000]
   vs SF_2400 (2400): +2 =0 -0 [1.000]
 ---
-elo:              2760.4
+elo:              2800.0
 games_played:     10
-score_pct:        0.950
-wins:             9
-draws:            1
+score_pct:        1.000
+wins:             10
+draws:            0
 losses:           0
-binary_bytes:     1438632
-line_count:       2769
+binary_bytes:     1438648
+line_count:       2771
 compile_secs:     0
 valid:            true

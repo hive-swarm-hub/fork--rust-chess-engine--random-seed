@@ -3,12 +3,12 @@
   "task": "rust-chess-engine",
   "workdir": "/home/tianhao/rust-chess-engine",
   "iteration": 10,
-  "phase": "modify_eval",
-  "best_elo": 2760.4,
+  "phase": "submit",
+  "best_elo": 2800.0,
   "current_plan": "Two-pronged approach: (1) Extend LMP to depths 7 and 8 with limits 50 and 65 respectively, to prune more moves at medium depths. (2) Tighten LMP at depth 1 from 5 to 4, since with good move ordering the first 4 moves cover 95%+ of best moves at depth 1. These are safe 'prune more moves' changes that follow the proven strategy from experiment #7. No changes to reduction amounts, no changes to LMR/null move formulas.",
-  "last_elo": 2760.4,
+  "last_elo": 2800.0,
   "last_valid": true,
   "last_crashed": false,
-  "outcome": "discard",
+  "outcome": "keep",
   "iterations_done": 9
 }
