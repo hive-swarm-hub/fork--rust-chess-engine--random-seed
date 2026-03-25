@@ -381,6 +381,8 @@ struct RustAlphaBetaEngine {
     killer_moves: Vec<[Option<ChessMove>; 2]>,
     history_heuristic: Vec<i32>,
     capture_history: Vec<i16>,
+    countermove: Vec<Option<ChessMove>>,  // indexed by previous move's move_key
+    move_stack: Vec<Option<ChessMove>>,  // move played at each ply for countermove tracking
     eval_cache: Vec<EvalCacheEntry>,
     pawn_cache: Vec<PawnCacheEntry>,
     deadline: Option<Instant>,
@@ -397,6 +399,8 @@ impl RustAlphaBetaEngine {
             killer_moves: vec![[None, None]; KILLER_PLY_CAPACITY],
             history_heuristic: vec![0; HISTORY_SIZE],
             capture_history: vec![0; HISTORY_SIZE * CAPTURE_HISTORY_PIECES],
+            countermove: vec![None; HISTORY_SIZE],
+            move_stack: vec![None; KILLER_PLY_CAPACITY],
             eval_cache: vec![EvalCacheEntry::default(); EVAL_CACHE_SIZE],
             pawn_cache: vec![PawnCacheEntry::default(); PAWN_CACHE_SIZE],
             deadline: None,
@@ -732,6 +736,8 @@ impl RustAlphaBetaEngine {
             killer_moves: self.killer_moves.clone(),
             history_heuristic: self.history_heuristic.clone(),
             capture_history: self.capture_history.clone(),
+            countermove: self.countermove.clone(),
+            move_stack: self.move_stack.clone(),
             eval_cache: self.eval_cache.clone(),
             pawn_cache: self.pawn_cache.clone(),
             deadline: self.deadline,
@@ -891,6 +897,18 @@ impl RustAlphaBetaEngine {
             }
         }
 
+        // Singular extension: if TT move is much better than alternatives, extend it
+        let mut singular_move: Option<ChessMove> = None;
+        if let (Some(entry), Some(tt_mv)) = (tt_entry, tt_move) {
+            if effective_depth >= 8
+                && entry.depth >= effective_depth - 3
+                && entry.flag != UPPER_BOUND
+                && entry.score.abs() < MATE_SCORE - 512
+            {
+                singular_move = Some(tt_mv);
+            }
+        }
+
         let mut best_move: Option<ChessMove> = None;
         let mut best_score = -INFINITY;
         let mut move_picker = self.scored_moves(board, tt_move, ply, false);
@@ -913,7 +931,6 @@ impl RustAlphaBetaEngine {
                 None
             };
             let is_quiet = !is_capture_move && chess_move.get_promotion().is_none();
-            // Use already-computed child board instead of redundant make_move_new
             let gives_check_move = in_check(&child);
 
             if is_quiet && !in_check_now && !gives_check_move {
@@ -928,11 +945,38 @@ impl RustAlphaBetaEngine {
                 if move_count > late_move_pruning_limit(effective_depth) {
                     continue;
                 }
+                // SEE pruning for quiet moves at low depth
+                if effective_depth <= 4 && move_count > 3
+                    && static_exchange_eval(board, chess_move) < -50 * effective_depth
+                {
+                    continue;
+                }
                 searched_quiets.push(chess_move);
             }
             if let Some(victim) = capture_victim {
                 searched_captures.push((chess_move, victim));
             }
+
+            // Singular extension: extend TT move if it's singularly better
+            let mut extension = 0;
+            if singular_move == Some(chess_move) {
+                let se_beta = tt_entry.unwrap().score - 2 * effective_depth;
+                let se_depth = (effective_depth - 1) / 2;
+                // Search excluding TT move at reduced depth/window
+                let excluded_score = self.negamax_excluding(
+                    board, se_depth, se_beta - 1, se_beta,
+                    ply, repetition, chess_move,
+                );
+                if let Some(se_score) = excluded_score {
+                    if se_score < se_beta {
+                        extension = 1; // TT move is singular, extend it
+                    }
+                }
+            }
+
+            // Track move at this ply for countermove recording
+            self.ensure_ply_capacity(ply + 2);
+            self.move_stack[ply] = Some(chess_move);
 
             repetition.push(child_hash);
 
@@ -940,7 +984,7 @@ impl RustAlphaBetaEngine {
                 if move_count == 1 {
                     return Some(-self.negamax(
                         &child,
-                        effective_depth - 1,
+                        effective_depth - 1 + extension,
                         -beta,
                         -alpha,
                         ply + 1,
@@ -955,7 +999,19 @@ impl RustAlphaBetaEngine {
                     && !in_check_now
                     && !gives_check_move
                 {
-                    let reduction = late_move_reduction(effective_depth, move_count);
+                    let mut reduction = late_move_reduction(effective_depth, move_count);
+                    // Reduce less for countermoves and killers
+                    let mk = move_key(chess_move) as usize;
+                    if self.killer_moves.get(ply).map_or(false, |k| k[0] == Some(chess_move) || k[1] == Some(chess_move)) {
+                        reduction = (reduction - 1).max(0);
+                    }
+                    // Reduce more if not improving
+                    if let Some(eval) = static_eval {
+                        if eval <= alpha {
+                            reduction += 1;
+                        }
+                    }
+                    let _ = mk; // suppress warning
                     search_depth = (search_depth - reduction).max(0);
                 }
 
@@ -1004,6 +1060,12 @@ impl RustAlphaBetaEngine {
                 if is_quiet {
                     self.record_killer(chess_move, ply);
                     self.update_history(chess_move, bonus);
+                    // Record countermove: this move refutes the previous move
+                    if ply > 0 {
+                        if let Some(prev_move) = self.move_stack[ply - 1] {
+                            self.countermove[move_key(prev_move) as usize] = Some(chess_move);
+                        }
+                    }
                     for previous in searched_quiets.iter().copied() {
                         if previous != chess_move {
                             self.update_history(previous, -bonus);
@@ -1104,6 +1166,47 @@ impl RustAlphaBetaEngine {
         }
 
         Some(alpha)
+    }
+
+    /// Simplified negamax that excludes a specific move — used for singular extension verification
+    fn negamax_excluding(
+        &mut self,
+        board: &Board,
+        depth: i32,
+        alpha: i32,
+        beta: i32,
+        ply: usize,
+        repetition: &mut RepetitionTracker,
+        excluded_move: ChessMove,
+    ) -> Option<i32> {
+        if self.should_stop() || depth <= 0 {
+            return Some(self.evaluate(board));
+        }
+
+        let mut best_score = -INFINITY;
+        let mut moves = self.scored_moves(board, None, ply, false);
+
+        for index in 0..moves.len() {
+            let chess_move = pick_next_move(&mut moves, index)?;
+            if chess_move == excluded_move {
+                continue;
+            }
+
+            let child = board.make_move_new(chess_move);
+            let child_hash = board_hash(&child);
+            repetition.push(child_hash);
+            let score = -self.negamax(&child, depth - 1, -beta, -alpha, ply + 1, repetition)?;
+            repetition.pop(child_hash);
+
+            if score > best_score {
+                best_score = score;
+            }
+            if score >= beta {
+                return Some(score);
+            }
+        }
+
+        Some(best_score)
     }
 
     fn should_stop(&mut self) -> bool {
@@ -1348,6 +1451,15 @@ impl RustAlphaBetaEngine {
             }
         }
 
+        // Countermove bonus: if this move refutes the previous move
+        if ply > 0 {
+            if let Some(prev_move) = self.move_stack.get(ply - 1).copied().flatten() {
+                if self.countermove.get(move_key(prev_move) as usize).copied().flatten() == Some(chess_move) {
+                    score += 200_000;
+                }
+            }
+        }
+
         if gives_check(board, chess_move) {
             score += 50_000;
         }
@@ -1383,6 +1495,9 @@ impl RustAlphaBetaEngine {
     fn ensure_ply_capacity(&mut self, size: usize) {
         if self.killer_moves.len() < size {
             self.killer_moves.resize(size, [None, None]);
+        }
+        if self.move_stack.len() < size {
+            self.move_stack.resize(size, None);
         }
     }
 
