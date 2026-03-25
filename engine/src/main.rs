@@ -26,7 +26,7 @@ fn main() {
 
         match tokens[0] {
             "uci" => {
-                send("id name HiveChess 0.2");
+                send("id name HiveChess 0.3");
                 send("id author HiveAgent");
                 send("uciok");
             }
@@ -68,7 +68,7 @@ fn main() {
                 let side = current_board.side_to_move();
                 let mut time_ms: u64 = 10000;
                 let mut inc_ms: u64 = 0;
-                let mut movestogo: u32 = 30;
+                let mut _movestogo: u32 = 30;
                 let mut max_depth: Option<i32> = None;
                 let mut movetime: Option<u64> = None;
 
@@ -79,7 +79,7 @@ fn main() {
                         "btime" => { if let Some(t) = tokens.get(i+1).and_then(|t| t.parse().ok()) { if side == Color::Black { time_ms = t; } } i += 2; }
                         "winc"  => { if let Some(t) = tokens.get(i+1).and_then(|t| t.parse().ok()) { if side == Color::White { inc_ms = t; } } i += 2; }
                         "binc"  => { if let Some(t) = tokens.get(i+1).and_then(|t| t.parse().ok()) { if side == Color::Black { inc_ms = t; } } i += 2; }
-                        "movestogo" => { movestogo = tokens.get(i+1).and_then(|t| t.parse().ok()).unwrap_or(30); i += 2; }
+                        "movestogo" => { _movestogo = tokens.get(i+1).and_then(|t| t.parse().ok()).unwrap_or(30); i += 2; }
                         "depth" => { max_depth = tokens.get(i+1).and_then(|t| t.parse().ok()); i += 2; }
                         "movetime" => { movetime = tokens.get(i+1).and_then(|t| t.parse().ok()); i += 2; }
                         "infinite" => { time_ms = 999_999_999; i += 1; }
@@ -90,7 +90,6 @@ fn main() {
                 let alloc_ms = if let Some(mt) = movetime {
                     mt
                 } else {
-                    // Use 1/20 of remaining + increment, cap at 1/3 remaining
                     let base = time_ms / 20;
                     let with_inc = base + inc_ms;
                     with_inc.min(time_ms / 3).max(100)
@@ -119,7 +118,7 @@ fn main() {
 }
 
 // =============================================================================
-// Engine code below (ported from github.com/deedy/chess rust/src/lib.rs)
+// Engine code below
 // =============================================================================
 
 use std::array;
@@ -140,9 +139,15 @@ const ASPIRATION_WINDOW: i32 = 40;
 const HISTORY_SIZE: usize = 1 << 16;
 const KILLER_PLY_CAPACITY: usize = 128;
 const MAX_ROOT_THREADS: usize = 8;
-const MAX_TT_ENTRIES: usize = 2_000_000;
-const MAX_EVAL_CACHE_ENTRIES: usize = 500_000;
-const MAX_PAWN_CACHE_ENTRIES: usize = 200_000;
+
+// Fixed-size hash tables (power-of-2 for fast masking)
+const TT_SIZE: usize = 1 << 21; // 2M entries
+const TT_MASK: usize = TT_SIZE - 1;
+const EVAL_CACHE_SIZE: usize = 1 << 19; // 512K entries
+const EVAL_CACHE_MASK: usize = EVAL_CACHE_SIZE - 1;
+const PAWN_CACHE_SIZE: usize = 1 << 18; // 256K entries
+const PAWN_CACHE_MASK: usize = PAWN_CACHE_SIZE - 1;
+
 const HISTORY_LIMIT: i32 = 32_000;
 const CAPTURE_HISTORY_PIECES: usize = 6;
 const CAPTURE_HISTORY_LIMIT: i32 = 16_000;
@@ -228,16 +233,70 @@ const KING_ENDGAME_TABLE: [i32; 64] = [
     -30, -50,
 ];
 
+// Precomputed LMR reduction table
+static LMR_TABLE: [[i32; 64]; 64] = {
+    let mut table = [[0i32; 64]; 64];
+    let mut depth = 1;
+    while depth < 64 {
+        let mut moves = 1;
+        while moves < 64 {
+            let d = depth as f64;
+            let m = moves as f64;
+            // Use ln approximation via log2 * ln(2)
+            let ln2 = 0.6931471805599453;
+            let log2_d = {
+                let mut v = d;
+                let mut r = 0.0;
+                while v >= 2.0 { v /= 2.0; r += 1.0; }
+                r + (v - 1.0) * 0.5 // rough ln via log2
+            };
+            let log2_m = {
+                let mut v = m;
+                let mut r = 0.0;
+                while v >= 2.0 { v /= 2.0; r += 1.0; }
+                r + (v - 1.0) * 0.5
+            };
+            let ln_d = log2_d * ln2;
+            let ln_m = log2_m * ln2;
+            let r = (0.75 + ln_d * ln_m / 2.25) as i32;
+            table[depth][moves] = if r < 1 { 1 } else { r };
+            moves += 1;
+        }
+        depth += 1;
+    }
+    table
+};
+
 #[derive(Clone, Copy)]
 struct TTEntry {
+    key: u64,
     depth: i32,
     score: i32,
     flag: u8,
     best_move: Option<ChessMove>,
 }
 
+impl Default for TTEntry {
+    fn default() -> Self {
+        Self { key: 0, depth: 0, score: 0, flag: 0, best_move: None }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct EvalCacheEntry {
+    key: u64,
+    score: i32,
+}
+
+impl Default for EvalCacheEntry {
+    fn default() -> Self {
+        Self { key: 0, score: 0 }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct PawnCacheEntry {
+    key: u64,
     white_structure_mg: i32,
     black_structure_mg: i32,
     white_structure_eg: i32,
@@ -246,6 +305,18 @@ struct PawnCacheEntry {
     black_center_mg: i32,
     white_files: [u8; 8],
     black_files: [u8; 8],
+}
+
+impl Default for PawnCacheEntry {
+    fn default() -> Self {
+        Self {
+            key: 0,
+            white_structure_mg: 0, black_structure_mg: 0,
+            white_structure_eg: 0, black_structure_eg: 0,
+            white_center_mg: 0, black_center_mg: 0,
+            white_files: [0; 8], black_files: [0; 8],
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -299,19 +370,19 @@ struct RootChunkResult {
     best_move: Option<ChessMove>,
     best_score: i32,
     nodes: u64,
-    tt: HashMap<u64, TTEntry>,
+    tt: Vec<TTEntry>,
 }
 
 struct RustAlphaBetaEngine {
     depth: i32,
     threads: usize,
     nodes: u64,
-    tt: HashMap<u64, TTEntry>,
+    tt: Vec<TTEntry>,
     killer_moves: Vec<[Option<ChessMove>; 2]>,
     history_heuristic: Vec<i32>,
     capture_history: Vec<i16>,
-    eval_cache: HashMap<u64, i32>,
-    pawn_cache: HashMap<u64, PawnCacheEntry>,
+    eval_cache: Vec<EvalCacheEntry>,
+    pawn_cache: Vec<PawnCacheEntry>,
     deadline: Option<Instant>,
     stopped: bool,
 }
@@ -322,12 +393,12 @@ impl RustAlphaBetaEngine {
             depth,
             threads: available_root_threads(),
             nodes: 0,
-            tt: HashMap::new(),
+            tt: vec![TTEntry::default(); TT_SIZE],
             killer_moves: vec![[None, None]; KILLER_PLY_CAPACITY],
             history_heuristic: vec![0; HISTORY_SIZE],
             capture_history: vec![0; HISTORY_SIZE * CAPTURE_HISTORY_PIECES],
-            eval_cache: HashMap::new(),
-            pawn_cache: HashMap::new(),
+            eval_cache: vec![EvalCacheEntry::default(); EVAL_CACHE_SIZE],
+            pawn_cache: vec![PawnCacheEntry::default(); PAWN_CACHE_SIZE],
             deadline: None,
             stopped: false,
         }
@@ -340,8 +411,6 @@ impl RustAlphaBetaEngine {
         movetime_ms: Option<u64>,
         moves_uci: Option<Vec<String>>,
     ) -> Result<RawSearchResult, String> {
-        self.trim_caches();
-
         let mut board = Board::from_str(fen).map_err(|error| {
             format!("invalid FEN for Rust search backend: {error}")
         })?;
@@ -492,10 +561,12 @@ impl RustAlphaBetaEngine {
         beta: i32,
         repetition: &mut RepetitionTracker,
     ) -> Option<(i32, ChessMove)> {
-        let tt_move = self
-            .tt
-            .get(&board_hash(board))
-            .and_then(|entry| entry.best_move);
+        let tt_key = board_hash(board);
+        let tt_idx = tt_key as usize & TT_MASK;
+        let tt_move = {
+            let entry = &self.tt[tt_idx];
+            if entry.key == tt_key { entry.best_move } else { None }
+        };
         let mut root_moves = self.scored_moves(board, tt_move, 0, false);
         if root_moves.is_empty() {
             return None;
@@ -504,11 +575,11 @@ impl RustAlphaBetaEngine {
 
         if !self.should_parallelize_root(depth, root_moves.len()) {
             let score = self.negamax(board, depth, alpha, beta, 0, repetition)?;
-            let best_move = self
-                .tt
-                .get(&board_hash(board))
-                .and_then(|entry| entry.best_move)
-                .or_else(|| MoveGen::new_legal(board).next())?;
+            let tt_idx2 = board_hash(board) as usize & TT_MASK;
+            let best_move = {
+                let entry = &self.tt[tt_idx2];
+                if entry.key == board_hash(board) { entry.best_move } else { None }
+            }.or_else(|| MoveGen::new_legal(board).next())?;
             return Some((score, best_move));
         }
 
@@ -668,17 +739,13 @@ impl RustAlphaBetaEngine {
         }
     }
 
-    fn merge_tt(&mut self, other: HashMap<u64, TTEntry>) {
-        for (key, entry) in other {
-            self.merge_tt_entry(key, entry);
-        }
-    }
-
-    fn merge_tt_entry(&mut self, key: u64, entry: TTEntry) {
-        match self.tt.get(&key) {
-            Some(existing) if existing.depth > entry.depth => {}
-            _ => {
-                self.tt.insert(key, entry);
+    fn merge_tt(&mut self, other: Vec<TTEntry>) {
+        for (i, entry) in other.iter().enumerate() {
+            if entry.key != 0 {
+                let existing = &self.tt[i];
+                if existing.key == 0 || entry.depth >= existing.depth {
+                    self.tt[i] = *entry;
+                }
             }
         }
     }
@@ -699,15 +766,18 @@ impl RustAlphaBetaEngine {
         } else {
             EXACT
         };
-        self.merge_tt_entry(
-            board_hash(board),
-            TTEntry {
+        let key = board_hash(board);
+        let idx = key as usize & TT_MASK;
+        let existing = &self.tt[idx];
+        if existing.key == 0 || depth >= existing.depth || existing.key == key {
+            self.tt[idx] = TTEntry {
+                key,
                 depth,
                 score,
                 flag,
                 best_move: Some(best_move),
-            },
-        );
+            };
+        }
     }
 
     fn negamax(
@@ -741,7 +811,11 @@ impl RustAlphaBetaEngine {
         let alpha_original = alpha;
         let beta_original = beta;
         let tt_key = board_hash(board);
-        let tt_entry = self.tt.get(&tt_key).copied();
+        let tt_idx = tt_key as usize & TT_MASK;
+        let tt_entry = {
+            let entry = self.tt[tt_idx];
+            if entry.key == tt_key { Some(entry) } else { None }
+        };
         let mut tt_move = tt_entry.and_then(|entry| entry.best_move);
 
         if let Some(entry) = tt_entry {
@@ -766,7 +840,8 @@ impl RustAlphaBetaEngine {
             };
             if iid_depth > 0 {
                 let _ = self.negamax(board, iid_depth, alpha, beta, ply, repetition);
-                tt_move = self.tt.get(&tt_key).and_then(|entry| entry.best_move);
+                let entry = &self.tt[tt_idx];
+                tt_move = if entry.key == tt_key { entry.best_move } else { None };
             }
         }
 
@@ -838,7 +913,8 @@ impl RustAlphaBetaEngine {
                 None
             };
             let is_quiet = !is_capture_move && chess_move.get_promotion().is_none();
-            let gives_check_move = gives_check(board, chess_move);
+            // Use already-computed child board instead of redundant make_move_new
+            let gives_check_move = in_check(&child);
 
             if is_quiet && !in_check_now && !gives_check_move {
                 if let Some(eval) = static_eval {
@@ -960,16 +1036,15 @@ impl RustAlphaBetaEngine {
             EXACT
         };
         let new_entry = TTEntry {
+            key: tt_key,
             depth: effective_depth,
             score: best_score,
             flag,
             best_move,
         };
-        match self.tt.get(&tt_key) {
-            Some(existing) if existing.depth > new_entry.depth => {}
-            _ => {
-                self.tt.insert(tt_key, new_entry);
-            }
+        let existing = &self.tt[tt_idx];
+        if existing.key == 0 || new_entry.depth >= existing.depth || existing.key == tt_key {
+            self.tt[tt_idx] = new_entry;
         }
         Some(best_score)
     }
@@ -1049,8 +1124,10 @@ impl RustAlphaBetaEngine {
 
     fn evaluate(&mut self, board: &Board) -> i32 {
         let board_key = board_hash(board);
-        if let Some(score) = self.eval_cache.get(&board_key) {
-            return *score;
+        let eval_idx = board_key as usize & EVAL_CACHE_MASK;
+        let cached = &self.eval_cache[eval_idx];
+        if cached.key == board_key {
+            return cached.score;
         }
 
         let phase = game_phase(board);
@@ -1060,56 +1137,56 @@ impl RustAlphaBetaEngine {
         let mut white_eg = 0;
         let mut black_eg = 0;
 
-        for square in piece_squares(board, Color::White, Piece::Pawn) {
+        for square in piece_bb(board, Color::White, Piece::Pawn) {
             let pst = PAWN_TABLE[square_index(square)];
             white_mg += PAWN + pst;
             white_eg += PAWN + pst / 2;
         }
-        for square in piece_squares(board, Color::Black, Piece::Pawn) {
+        for square in piece_bb(board, Color::Black, Piece::Pawn) {
             let pst = PAWN_TABLE[mirror_index(square_index(square))];
             black_mg += PAWN + pst;
             black_eg += PAWN + pst / 2;
         }
 
-        for square in piece_squares(board, Color::White, Piece::Knight) {
+        for square in piece_bb(board, Color::White, Piece::Knight) {
             let pst = KNIGHT_TABLE[square_index(square)];
             white_mg += KNIGHT + pst;
             white_eg += KNIGHT + pst / 4;
         }
-        for square in piece_squares(board, Color::Black, Piece::Knight) {
+        for square in piece_bb(board, Color::Black, Piece::Knight) {
             let pst = KNIGHT_TABLE[mirror_index(square_index(square))];
             black_mg += KNIGHT + pst;
             black_eg += KNIGHT + pst / 4;
         }
 
-        for square in piece_squares(board, Color::White, Piece::Bishop) {
+        for square in piece_bb(board, Color::White, Piece::Bishop) {
             let pst = BISHOP_TABLE[square_index(square)];
             white_mg += BISHOP + pst;
             white_eg += BISHOP + pst / 2;
         }
-        for square in piece_squares(board, Color::Black, Piece::Bishop) {
+        for square in piece_bb(board, Color::Black, Piece::Bishop) {
             let pst = BISHOP_TABLE[mirror_index(square_index(square))];
             black_mg += BISHOP + pst;
             black_eg += BISHOP + pst / 2;
         }
 
-        for square in piece_squares(board, Color::White, Piece::Rook) {
+        for square in piece_bb(board, Color::White, Piece::Rook) {
             let pst = ROOK_TABLE[square_index(square)];
             white_mg += ROOK + pst;
             white_eg += ROOK + pst / 3;
         }
-        for square in piece_squares(board, Color::Black, Piece::Rook) {
+        for square in piece_bb(board, Color::Black, Piece::Rook) {
             let pst = ROOK_TABLE[mirror_index(square_index(square))];
             black_mg += ROOK + pst;
             black_eg += ROOK + pst / 3;
         }
 
-        for square in piece_squares(board, Color::White, Piece::Queen) {
+        for square in piece_bb(board, Color::White, Piece::Queen) {
             let pst = QUEEN_TABLE[square_index(square)];
             white_mg += QUEEN + pst;
             white_eg += QUEEN + pst / 4;
         }
-        for square in piece_squares(board, Color::Black, Piece::Queen) {
+        for square in piece_bb(board, Color::Black, Piece::Queen) {
             let pst = QUEEN_TABLE[mirror_index(square_index(square))];
             black_mg += QUEEN + pst;
             black_eg += QUEEN + pst / 4;
@@ -1160,11 +1237,11 @@ impl RustAlphaBetaEngine {
         white_mg += development_score(board, Color::White, endgame);
         black_mg += development_score(board, Color::Black, endgame);
 
-        if piece_squares(board, Color::White, Piece::Bishop).len() >= 2 {
+        if piece_bb(board, Color::White, Piece::Bishop).popcnt() >= 2 {
             white_mg += BISHOP_PAIR_BONUS;
             white_eg += BISHOP_PAIR_BONUS + 6;
         }
-        if piece_squares(board, Color::Black, Piece::Bishop).len() >= 2 {
+        if piece_bb(board, Color::Black, Piece::Bishop).popcnt() >= 2 {
             black_mg += BISHOP_PAIR_BONUS;
             black_eg += BISHOP_PAIR_BONUS + 6;
         }
@@ -1193,10 +1270,7 @@ impl RustAlphaBetaEngine {
             black_score - white_score + TEMPO_BONUS
         };
 
-        if self.eval_cache.len() >= MAX_EVAL_CACHE_ENTRIES {
-            self.eval_cache.clear();
-        }
-        self.eval_cache.insert(board_key, score);
+        self.eval_cache[eval_idx] = EvalCacheEntry { key: board_key, score };
         score
     }
 
@@ -1314,37 +1388,28 @@ impl RustAlphaBetaEngine {
 
     fn pawn_entry(&mut self, board: &Board) -> PawnCacheEntry {
         let pawn_hash = board.get_pawn_hash();
-        if let Some(entry) = self.pawn_cache.get(&pawn_hash) {
-            return *entry;
+        let pawn_idx = pawn_hash as usize & PAWN_CACHE_MASK;
+        let cached = &self.pawn_cache[pawn_idx];
+        if cached.key == pawn_hash {
+            return *cached;
         }
 
-        let entry = analyze_pawns(board);
-        if self.pawn_cache.len() >= MAX_PAWN_CACHE_ENTRIES {
-            self.pawn_cache.clear();
-        }
-        self.pawn_cache.insert(pawn_hash, entry);
+        let mut entry = analyze_pawns(board);
+        entry.key = pawn_hash;
+        self.pawn_cache[pawn_idx] = entry;
         entry
-    }
-
-    fn trim_caches(&mut self) {
-        if self.tt.len() > MAX_TT_ENTRIES {
-            self.tt.clear();
-        }
-        if self.eval_cache.len() > MAX_EVAL_CACHE_ENTRIES {
-            self.eval_cache.clear();
-        }
-        if self.pawn_cache.len() > MAX_PAWN_CACHE_ENTRIES {
-            self.pawn_cache.clear();
-        }
     }
 
     fn extract_principal_variation(&self, mut board: Board, depth: i32) -> Vec<String> {
         let mut line = Vec::new();
 
         for _ in 0..depth {
-            let Some(entry) = self.tt.get(&board_hash(&board)) else {
+            let key = board_hash(&board);
+            let idx = key as usize & TT_MASK;
+            let entry = &self.tt[idx];
+            if entry.key != key {
                 break;
-            };
+            }
             let Some(best_move) = entry.best_move else {
                 break;
             };
@@ -1359,6 +1424,10 @@ impl RustAlphaBetaEngine {
     }
 }
 
+// =============================================================================
+// Helper functions
+// =============================================================================
+
 fn board_hash(board: &Board) -> u64 {
     board.get_hash()
 }
@@ -1369,10 +1438,12 @@ fn available_root_threads() -> usize {
         .unwrap_or(1)
 }
 
+#[inline(always)]
 fn square_index(square: Square) -> usize {
     square.to_index()
 }
 
+#[inline(always)]
 fn mirror_index(index: usize) -> usize {
     index ^ 56
 }
@@ -1432,6 +1503,19 @@ fn piece_index(piece: Piece) -> usize {
         Piece::Queen => 4,
         Piece::King => 5,
     }
+}
+
+/// Fast bitboard accessor — no allocation, returns BitBoard for direct iteration
+#[inline(always)]
+fn piece_bb(board: &Board, color: Color, piece: Piece) -> BitBoard {
+    *board.pieces(piece) & *board.color_combined(color)
+}
+
+/// Fast king square lookup — no Vec allocation
+#[inline(always)]
+fn king_square(board: &Board, color: Color) -> Option<Square> {
+    let bb = piece_bb(board, color, Piece::King);
+    if bb == BitBoard(0) { None } else { Some(bb.to_square()) }
 }
 
 fn remove_piece(
@@ -1608,15 +1692,11 @@ fn pick_next_move(moves: &mut [ScoredMove], start: usize) -> Option<ChessMove> {
     Some(moves[start].chess_move)
 }
 
+/// Logarithmic LMR reduction using precomputed table
 fn late_move_reduction(depth: i32, move_count: usize) -> i32 {
-    let mut reduction = 1;
-    if depth >= 5 && move_count > 6 {
-        reduction += 1;
-    }
-    if depth >= 6 && move_count > 12 {
-        reduction += 1;
-    }
-    reduction
+    let d = (depth as usize).min(63);
+    let m = move_count.min(63);
+    LMR_TABLE[d][m]
 }
 
 fn late_move_pruning_limit(depth: i32) -> usize {
@@ -1768,18 +1848,13 @@ fn victim_piece(board: &Board, chess_move: ChessMove) -> Option<Piece> {
     None
 }
 
-fn piece_squares(board: &Board, color: Color, piece: Piece) -> Vec<Square> {
-    (board.pieces(piece) & board.color_combined(color))
-        .into_iter()
-        .collect()
-}
-
-fn only_piece_color(board: &Board, color: Color) -> u64 {
-    (*board.color_combined(color)).0
-}
-
-fn board_occupancy(board: &Board) -> u64 {
-    (*board.combined()).0
+fn has_non_pawn_material(board: &Board, color: Color) -> bool {
+    for piece in [Piece::Knight, Piece::Bishop, Piece::Rook, Piece::Queen] {
+        if (*board.pieces(piece) & *board.color_combined(color)).popcnt() > 0 {
+            return true;
+        }
+    }
+    false
 }
 
 fn file_index(square: Square) -> i32 {
@@ -1798,19 +1873,6 @@ fn square_from_coords(file: i32, rank: i32) -> Option<Square> {
         Rank::from_index(rank as usize),
         File::from_index(file as usize),
     ))
-}
-
-fn king_square(board: &Board, color: Color) -> Option<Square> {
-    piece_squares(board, color, Piece::King).into_iter().next()
-}
-
-fn has_non_pawn_material(board: &Board, color: Color) -> bool {
-    for piece in [Piece::Knight, Piece::Bishop, Piece::Rook, Piece::Queen] {
-        if (*board.pieces(piece) & *board.color_combined(color)).popcnt() > 0 {
-            return true;
-        }
-    }
-    false
 }
 
 fn king_position_score(board: &Board, color: Color, endgame: bool) -> i32 {
@@ -1843,8 +1905,6 @@ fn tapered_score(midgame: i32, endgame: i32, phase: i32) -> i32 {
 }
 
 fn analyze_pawns(board: &Board) -> PawnCacheEntry {
-    let white_pawns = piece_squares(board, Color::White, Piece::Pawn);
-    let black_pawns = piece_squares(board, Color::Black, Piece::Pawn);
     let mut white_ranks: [Vec<i32>; 8] = array::from_fn(|_| Vec::new());
     let mut black_ranks: [Vec<i32>; 8] = array::from_fn(|_| Vec::new());
     let mut white_files = [0_u8; 8];
@@ -1852,7 +1912,7 @@ fn analyze_pawns(board: &Board) -> PawnCacheEntry {
     let mut white_center_mg = 0;
     let mut black_center_mg = 0;
 
-    for square in white_pawns {
+    for square in piece_bb(board, Color::White, Piece::Pawn) {
         let file = file_index(square) as usize;
         let rank = rank_index(square);
         white_ranks[file].push(rank);
@@ -1867,7 +1927,7 @@ fn analyze_pawns(board: &Board) -> PawnCacheEntry {
         }
     }
 
-    for square in black_pawns {
+    for square in piece_bb(board, Color::Black, Piece::Pawn) {
         let file = file_index(square) as usize;
         let rank = rank_index(square);
         black_ranks[file].push(rank);
@@ -1885,7 +1945,7 @@ fn analyze_pawns(board: &Board) -> PawnCacheEntry {
     let (mut white_structure_mg, mut white_structure_eg) = pawn_structure_from_files(&white_ranks);
     let (mut black_structure_mg, mut black_structure_eg) = pawn_structure_from_files(&black_ranks);
 
-    for square in piece_squares(board, Color::White, Piece::Pawn) {
+    for square in piece_bb(board, Color::White, Piece::Pawn) {
         let file = file_index(square);
         let rank = rank_index(square);
         if is_passed_pawn(Color::White, file, rank, &black_ranks) {
@@ -1898,7 +1958,7 @@ fn analyze_pawns(board: &Board) -> PawnCacheEntry {
             }
         }
     }
-    for square in piece_squares(board, Color::Black, Piece::Pawn) {
+    for square in piece_bb(board, Color::Black, Piece::Pawn) {
         let file = file_index(square);
         let rank = rank_index(square);
         if is_passed_pawn(Color::Black, file, rank, &white_ranks) {
@@ -1913,6 +1973,7 @@ fn analyze_pawns(board: &Board) -> PawnCacheEntry {
     }
 
     PawnCacheEntry {
+        key: 0, // will be set by caller
         white_structure_mg,
         black_structure_mg,
         white_structure_eg,
@@ -1968,38 +2029,27 @@ fn is_passed_pawn(color: Color, file_idx: i32, rank: i32, enemy_files: &[Vec<i32
     true
 }
 
+/// Bitboard-based mobility scoring — uses magic bitboard lookups instead of manual stepping
 fn mobility_score(board: &Board, color: Color) -> i32 {
-    let own = only_piece_color(board, color);
-    let occupied = board_occupancy(board);
+    let own = *board.color_combined(color);
+    let occupied = *board.combined();
     let mut score = 0;
 
-    for square in piece_squares(board, color, Piece::Knight) {
-        score += attack_count_knight(square, own) * MOBILITY_KNIGHT;
+    for square in piece_bb(board, color, Piece::Knight) {
+        let attacks = get_knight_moves(square) & !own;
+        score += attacks.popcnt() as i32 * MOBILITY_KNIGHT;
     }
-    for square in piece_squares(board, color, Piece::Bishop) {
-        score += attack_count_slider(square, own, occupied, &[(1, 1), (1, -1), (-1, 1), (-1, -1)])
-            * MOBILITY_BISHOP;
+    for square in piece_bb(board, color, Piece::Bishop) {
+        let attacks = get_bishop_moves(square, occupied) & !own;
+        score += attacks.popcnt() as i32 * MOBILITY_BISHOP;
     }
-    for square in piece_squares(board, color, Piece::Rook) {
-        score += attack_count_slider(square, own, occupied, &[(1, 0), (-1, 0), (0, 1), (0, -1)])
-            * MOBILITY_ROOK;
+    for square in piece_bb(board, color, Piece::Rook) {
+        let attacks = get_rook_moves(square, occupied) & !own;
+        score += attacks.popcnt() as i32 * MOBILITY_ROOK;
     }
-    for square in piece_squares(board, color, Piece::Queen) {
-        score += attack_count_slider(
-            square,
-            own,
-            occupied,
-            &[
-                (1, 1),
-                (1, -1),
-                (-1, 1),
-                (-1, -1),
-                (1, 0),
-                (-1, 0),
-                (0, 1),
-                (0, -1),
-            ],
-        ) * MOBILITY_QUEEN;
+    for square in piece_bb(board, color, Piece::Queen) {
+        let attacks = (get_rook_moves(square, occupied) | get_bishop_moves(square, occupied)) & !own;
+        score += attacks.popcnt() as i32 * MOBILITY_QUEEN;
     }
 
     score
@@ -2012,7 +2062,7 @@ fn rook_activity_score(
     enemy_files: &[u8; 8],
 ) -> i32 {
     let mut score = 0;
-    for rook in piece_squares(board, color, Piece::Rook) {
+    for rook in piece_bb(board, color, Piece::Rook) {
         let file = file_index(rook) as usize;
         if own_files[file] == 0 && enemy_files[file] == 0 {
             score += ROOK_OPEN_FILE_BONUS;
@@ -2031,7 +2081,7 @@ fn rook_activity_score(
 
 fn knight_outpost_score(board: &Board, color: Color) -> i32 {
     let mut score = 0;
-    for square in piece_squares(board, color, Piece::Knight) {
+    for square in piece_bb(board, color, Piece::Knight) {
         let rank = rank_index(square);
         let file = file_index(square);
         let advanced = if color == Color::White {
@@ -2122,55 +2172,6 @@ fn attacked_by_enemy_pawn(board: &Board, color: Color, square: Square) -> bool {
     false
 }
 
-fn attack_count_knight(square: Square, own: u64) -> i32 {
-    let file = file_index(square);
-    let rank = rank_index(square);
-    let deltas = [
-        (-2, -1),
-        (-2, 1),
-        (-1, -2),
-        (-1, 2),
-        (1, -2),
-        (1, 2),
-        (2, -1),
-        (2, 1),
-    ];
-    let mut count = 0;
-    for (df, dr) in deltas {
-        if let Some(target) = square_from_coords(file + df, rank + dr) {
-            if own & (1_u64 << square_index(target)) == 0 {
-                count += 1;
-            }
-        }
-    }
-    count
-}
-
-fn attack_count_slider(square: Square, own: u64, occupied: u64, deltas: &[(i32, i32)]) -> i32 {
-    let file = file_index(square);
-    let rank = rank_index(square);
-    let mut count = 0;
-
-    for (df, dr) in deltas {
-        let mut step_file = file + df;
-        let mut step_rank = rank + dr;
-        while let Some(target) = square_from_coords(step_file, step_rank) {
-            let bit = 1_u64 << square_index(target);
-            if own & bit != 0 {
-                break;
-            }
-            count += 1;
-            if occupied & bit != 0 {
-                break;
-            }
-            step_file += df;
-            step_rank += dr;
-        }
-    }
-
-    count
-}
-
 fn king_safety_score(
     board: &Board,
     color: Color,
@@ -2233,9 +2234,10 @@ fn king_safety_score(
         }
     }
 
-    let pressure = king_ring_attack_pressure(board, color);
+    // Bitboard-based king ring attack pressure
+    let pressure = king_ring_attack_pressure(board, color, king_sq);
     if pressure > 0 {
-        let enemy_has_queen = !piece_squares(board, !color, Piece::Queen).is_empty();
+        let enemy_has_queen = piece_bb(board, !color, Piece::Queen) != BitBoard(0);
         let multiplier = if enemy_has_queen {
             phase + 6
         } else {
@@ -2247,151 +2249,38 @@ fn king_safety_score(
     score
 }
 
-fn king_ring_attack_pressure(board: &Board, color: Color) -> i32 {
-    let Some(king_sq) = king_square(board, color) else {
-        return 0;
-    };
-
+/// Bitboard-based king ring attack pressure — uses magic bitboard lookups
+fn king_ring_attack_pressure(board: &Board, color: Color, king_sq: Square) -> i32 {
     let enemy = !color;
-    let occupied = board_occupancy(board);
+    let occupied = *board.combined();
+    let king_ring = get_king_moves(king_sq) | BitBoard::from_square(king_sq);
     let mut pressure = 0;
 
-    for pawn in piece_squares(board, enemy, Piece::Pawn) {
-        pressure += piece_ring_attack_count(pawn, Piece::Pawn, enemy, king_sq, occupied) * 2;
+    // Pawn attacks on king ring
+    for square in piece_bb(board, enemy, Piece::Pawn) {
+        let attacks = get_pawn_attacks(square, enemy, king_ring);
+        pressure += attacks.popcnt() as i32 * 2;
     }
-    for knight in piece_squares(board, enemy, Piece::Knight) {
-        pressure += piece_ring_attack_count(knight, Piece::Knight, enemy, king_sq, occupied) * 2;
+    // Knight attacks on king ring
+    for square in piece_bb(board, enemy, Piece::Knight) {
+        let attacks = get_knight_moves(square) & king_ring;
+        pressure += attacks.popcnt() as i32 * 2;
     }
-    for bishop in piece_squares(board, enemy, Piece::Bishop) {
-        pressure += piece_ring_attack_count(bishop, Piece::Bishop, enemy, king_sq, occupied) * 2;
+    // Bishop attacks on king ring
+    for square in piece_bb(board, enemy, Piece::Bishop) {
+        let attacks = get_bishop_moves(square, occupied) & king_ring;
+        pressure += attacks.popcnt() as i32 * 2;
     }
-    for rook in piece_squares(board, enemy, Piece::Rook) {
-        pressure += piece_ring_attack_count(rook, Piece::Rook, enemy, king_sq, occupied) * 3;
+    // Rook attacks on king ring
+    for square in piece_bb(board, enemy, Piece::Rook) {
+        let attacks = get_rook_moves(square, occupied) & king_ring;
+        pressure += attacks.popcnt() as i32 * 3;
     }
-    for queen in piece_squares(board, enemy, Piece::Queen) {
-        pressure += piece_ring_attack_count(queen, Piece::Queen, enemy, king_sq, occupied) * 4;
+    // Queen attacks on king ring
+    for square in piece_bb(board, enemy, Piece::Queen) {
+        let attacks = (get_rook_moves(square, occupied) | get_bishop_moves(square, occupied)) & king_ring;
+        pressure += attacks.popcnt() as i32 * 4;
     }
 
     pressure
 }
-
-fn piece_ring_attack_count(
-    source: Square,
-    piece: Piece,
-    color: Color,
-    king_sq: Square,
-    occupied: u64,
-) -> i32 {
-    let king_file = file_index(king_sq);
-    let king_rank = rank_index(king_sq);
-    let mut count = 0;
-    for delta_file in -1..=1 {
-        for delta_rank in -1..=1 {
-            let Some(target) = square_from_coords(king_file + delta_file, king_rank + delta_rank)
-            else {
-                continue;
-            };
-            if piece_attacks_square(source, piece, color, target, occupied) {
-                count += 1;
-            }
-        }
-    }
-    count
-}
-
-fn piece_attacks_square(
-    source: Square,
-    piece: Piece,
-    color: Color,
-    target: Square,
-    occupied: u64,
-) -> bool {
-    match piece {
-        Piece::Pawn => pawn_attacks_square(source, color, target),
-        Piece::Knight => knight_attacks_square(source, target),
-        Piece::Bishop => slider_attacks_square(
-            source,
-            target,
-            occupied,
-            &[(1, 1), (1, -1), (-1, 1), (-1, -1)],
-        ),
-        Piece::Rook => slider_attacks_square(
-            source,
-            target,
-            occupied,
-            &[(1, 0), (-1, 0), (0, 1), (0, -1)],
-        ),
-        Piece::Queen => slider_attacks_square(
-            source,
-            target,
-            occupied,
-            &[
-                (1, 1),
-                (1, -1),
-                (-1, 1),
-                (-1, -1),
-                (1, 0),
-                (-1, 0),
-                (0, 1),
-                (0, -1),
-            ],
-        ),
-        Piece::King => king_attacks_square(source, target),
-    }
-}
-
-fn pawn_attacks_square(source: Square, color: Color, target: Square) -> bool {
-    let rank_step = if color == Color::White { 1 } else { -1 };
-    let source_file = file_index(source);
-    let source_rank = rank_index(source);
-    for file_step in [-1, 1] {
-        let Some(candidate) = square_from_coords(source_file + file_step, source_rank + rank_step)
-        else {
-            continue;
-        };
-        if candidate == target {
-            return true;
-        }
-    }
-    false
-}
-
-fn knight_attacks_square(source: Square, target: Square) -> bool {
-    let file_delta = (file_index(source) - file_index(target)).abs();
-    let rank_delta = (rank_index(source) - rank_index(target)).abs();
-    (file_delta == 1 && rank_delta == 2) || (file_delta == 2 && rank_delta == 1)
-}
-
-fn king_attacks_square(source: Square, target: Square) -> bool {
-    let file_delta = (file_index(source) - file_index(target)).abs();
-    let rank_delta = (rank_index(source) - rank_index(target)).abs();
-    file_delta <= 1 && rank_delta <= 1
-}
-
-fn slider_attacks_square(
-    source: Square,
-    target: Square,
-    occupied: u64,
-    deltas: &[(i32, i32)],
-) -> bool {
-    let source_file = file_index(source);
-    let source_rank = rank_index(source);
-
-    for (file_step, rank_step) in deltas {
-        let mut next_file = source_file + file_step;
-        let mut next_rank = source_rank + rank_step;
-        while let Some(square) = square_from_coords(next_file, next_rank) {
-            if square == target {
-                return true;
-            }
-            if occupied & (1_u64 << square_index(square)) != 0 {
-                break;
-            }
-            next_file += file_step;
-            next_rank += rank_step;
-        }
-    }
-
-    false
-}
-
