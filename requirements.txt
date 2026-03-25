@@ -1,0 +1,2 @@
+# Python dependencies
+chess>=1.10.0    # Opening book generation (gen_openings.py)

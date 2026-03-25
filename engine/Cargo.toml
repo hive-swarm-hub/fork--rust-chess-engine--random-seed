@@ -1,0 +1,12 @@
+[package]
+name = "hive-chess"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+chess = "3.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

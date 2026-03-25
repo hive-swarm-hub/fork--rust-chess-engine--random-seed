@@ -1,0 +1,15 @@
+# Rust build artifacts
+engine/target/
+
+# Generated data (recreated by prepare.sh)
+data/
+tools/
+
+# Eval output
+eval/games.pgn
+
+# Results tracking (not committed per task spec)
+results.tsv
+
+# OS files
+.DS_Store
