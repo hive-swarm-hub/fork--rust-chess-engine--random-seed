@@ -4,6 +4,10 @@
   "workdir": "/home/tianhao/rust-chess-engine",
   "best_elo": 2800.0,
   "iteration": 1,
-  "phase": "modify_eval",
-  "current_plan": "Replace IID (Internal Iterative Deepening) with IIR (Internal Iterative Reduction). Remove the expensive recursive IID search at lines 1000-1011 and instead reduce effective_depth by 1 when no TT move is found. This saves nodes and allows deeper searches on the positions that matter most."
+  "phase": "submit",
+  "current_plan": "Replace IID (Internal Iterative Deepening) with IIR (Internal Iterative Reduction). Remove the expensive recursive IID search at lines 1000-1011 and instead reduce effective_depth by 1 when no TT move is found. This saves nodes and allows deeper searches on the positions that matter most.",
+  "last_elo": 2718.3,
+  "last_valid": true,
+  "last_crashed": false,
+  "outcome": "discard"
 }
