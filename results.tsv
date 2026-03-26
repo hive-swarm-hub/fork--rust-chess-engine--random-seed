@@ -26,3 +26,4 @@ ca99fa9	2630.5	10	discard	aspiration 30->25cp (regressed -129, too tight causes 
 bc91220	2924.3	10	keep	verification run: same code (contempt=0 + aspiration 30cp), 5W/3D/2L = 2924.3 NEW HIGH
 2b38964	2374.5	10	discard	negative contempt -8 (catastrophic -550, 1W/0D/9L, engine becomes too passive)
 efcf3a7	2881.7	10	discard	verification run #2: same code, 5W/2D/3L (below best 2924.3)
+1d082cc	2718.3	10	discard	ID time threshold 50%->67% (regressed -206, 4W/0D/6L, lost draws)
