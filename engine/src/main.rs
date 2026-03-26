@@ -193,7 +193,7 @@ const MAX_ROOT_THREADS: usize = 8;
 // Fixed-size hash tables (power-of-2 for fast masking)
 const TT_SIZE: usize = 1 << 21; // 2M entries
 const TT_MASK: usize = TT_SIZE - 1;
-const EVAL_CACHE_SIZE: usize = 1 << 19; // 512K entries
+const EVAL_CACHE_SIZE: usize = 1 << 21; // 2M entries (critical for non-incremental NNUE)
 const EVAL_CACHE_MASK: usize = EVAL_CACHE_SIZE - 1;
 const PAWN_CACHE_SIZE: usize = 1 << 18; // 256K entries
 const PAWN_CACHE_MASK: usize = PAWN_CACHE_SIZE - 1;
