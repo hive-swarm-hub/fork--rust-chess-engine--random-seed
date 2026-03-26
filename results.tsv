@@ -37,3 +37,4 @@ d40e4af	2718.3	10	discard	ProbCut depth>=5 beta+200-50*improving (regressed -41,
 421a6df	3048.9	193	keep	eval cache 512K->2M on NNUE base, SPRT 137W/29D/27L +11.6 ELO
 8398a62	3125.9	207	keep	fix NNUE scaling to centipawns, SPRT 165W/20D/22L +77 ELO
 9092caa	3195.5	196	keep	time mgmt time/15 + 50ms min, SPRT 163W/22D/11L +69.6 ELO
+fc4cf57	3104.7	200	discard	stability+ProbCut combo (regressed -91, ProbCut likely culprit)
