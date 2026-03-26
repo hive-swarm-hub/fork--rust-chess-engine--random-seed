@@ -17,3 +17,4 @@ dc291ee	2760.4	10	keep	VERIFICATION: same code, no changes. 9W/1D/0L confirms ~2
 6e6707b	2240.5	10	keep	NO CHANGES: same code. 5W/1D/4L. 4 runs: 2800/2760/2474/2240, avg ~2594
 ---	---	---	---	ANCHOR_CENTER changed from 2200 to 2800 (upstream merge). All scores above are INVALID for comparison. New baseline needed.
 28fb5ae	2718.3	10	keep	NEW BASELINE (ANCHOR=2800): IIR replaces IID. 4W/0D/6L vs SF 2600-3000. First valid result under new gauntlet.
+db7cfbc	2718.3	10	keep	aspiration window 40->30cp (matching top hive run e486)
