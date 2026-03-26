@@ -33,3 +33,4 @@ efcf3a7	2881.7	10	discard	verification run #2: same code, 5W/2D/3L (below best 2
 d40e4af	2718.3	10	discard	ProbCut depth>=5 beta+200-50*improving (regressed -41, 4W/0D/6L, killed draws)
 5286345	2525.9	10	discard	lockless shared TT + parallel root splitting (regressed -234, 2W/0D/8L, parallel split hurts move ordering)
 2584a61	2924.3	10	discard	NNUE via nnue-rs HalfKP (equal to best 2924.3, 5W/3D/2L, very promising)
+6a9afad	3037.3	204	keep	NNUE via nnue-rs HalfKP + contempt=0 + aspiration=30 + IIR, SPRT 144W/27D/33L NEW HIGH
