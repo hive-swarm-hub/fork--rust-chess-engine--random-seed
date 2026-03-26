@@ -140,10 +140,10 @@ fn main() {
                     let with_inc = base + inc_ms * 3 / 4;
                     with_inc.min(time_ms * 2 / 5).max(50)
                 } else {
-                    // Sudden death: use 1/20 of remaining
-                    let base = time_ms / 20;
+                    // Sudden death: use 1/15 of remaining (more time for deeper search)
+                    let base = time_ms / 15;
                     let with_inc = base + inc_ms;
-                    with_inc.min(time_ms / 3).max(100)
+                    with_inc.min(time_ms / 3).max(50)
                 };
 
                 let history = if move_history.is_empty() { None } else { Some(move_history.clone()) };
