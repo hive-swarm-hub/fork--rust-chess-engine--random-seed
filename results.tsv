@@ -23,3 +23,4 @@ db7cfbc	2718.3	10	keep	aspiration window 40->30cp (matching top hive run e486)
 ae8a57b	2759.5	10	discard	remove mop-up eval (equal, not improved)
 6140cb4	2675.7	10	discard	remove history gravity (regressed -84, gravity helps move ordering quality)
 ca99fa9	2630.5	10	discard	aspiration 30->25cp (regressed -129, too tight causes excess re-searches)
+bc91220	2924.3	10	keep	verification run: same code (contempt=0 + aspiration 30cp), 5W/3D/2L = 2924.3 NEW HIGH
