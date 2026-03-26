@@ -5,7 +5,7 @@
 use std::io::{self, BufRead, Write};
 use std::sync::OnceLock;
 use binread::BinRead;
-use nnue::stockfish::halfkp::SfHalfKpFullModel;
+use nnue::stockfish::halfkp::{SfHalfKpFullModel, scale_nn_to_centipawns};
 use nnue::{Color as NnueColor, Piece as NnuePiece, Square as NnueSquare};
 
 fn send(msg: &str) {
@@ -51,7 +51,7 @@ fn nnue_evaluate(board: &chess::Board) -> i32 {
         }
     }
     let stm = if board.side_to_move() == chess::Color::White { NnueColor::White } else { NnueColor::Black };
-    state.activate(stm)[0] / 16
+    scale_nn_to_centipawns(state.activate(stm)[0])
 }
 
 fn main() {
