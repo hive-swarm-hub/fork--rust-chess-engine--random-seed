@@ -3,10 +3,55 @@
 // Added UCI protocol for standalone operation
 
 use std::io::{self, BufRead, Write};
+use std::sync::OnceLock;
+use binread::BinRead;
+use nnue::stockfish::halfkp::SfHalfKpFullModel;
+use nnue::{Color as NnueColor, Piece as NnuePiece, Square as NnueSquare};
 
 fn send(msg: &str) {
     println!("{}", msg);
     io::stdout().flush().ok();
+}
+
+// NNUE model — loaded once, shared across all evaluations
+const NNUE_WEIGHTS: &[u8] = include_bytes!("nn.nnue");
+static NNUE_MODEL: OnceLock<SfHalfKpFullModel> = OnceLock::new();
+
+fn load_nnue() -> SfHalfKpFullModel {
+    let mut reader = std::io::Cursor::new(NNUE_WEIGHTS);
+    SfHalfKpFullModel::read(&mut reader).expect("Failed to parse NNUE model")
+}
+
+fn nnue_evaluate(board: &chess::Board) -> i32 {
+    let full = NNUE_MODEL.get_or_init(load_nnue);
+    let model = &full.model;
+    let wk_bb = *board.pieces(chess::Piece::King) & *board.color_combined(chess::Color::White);
+    let bk_bb = *board.pieces(chess::Piece::King) & *board.color_combined(chess::Color::Black);
+    let wk = NnueSquare::from_index(wk_bb.to_square().to_index());
+    let bk = NnueSquare::from_index(bk_bb.to_square().to_index());
+    let mut state = model.new_state(wk, bk);
+    for &piece in &[chess::Piece::Pawn, chess::Piece::Knight, chess::Piece::Bishop,
+                    chess::Piece::Rook, chess::Piece::Queen] {
+        for &color in &[chess::Color::White, chess::Color::Black] {
+            let bb = *board.pieces(piece) & *board.color_combined(color);
+            for sq in bb {
+                let np = match piece {
+                    chess::Piece::Pawn => NnuePiece::Pawn,
+                    chess::Piece::Knight => NnuePiece::Knight,
+                    chess::Piece::Bishop => NnuePiece::Bishop,
+                    chess::Piece::Rook => NnuePiece::Rook,
+                    chess::Piece::Queen => NnuePiece::Queen,
+                    _ => unreachable!(),
+                };
+                let nc = if color == chess::Color::White { NnueColor::White } else { NnueColor::Black };
+                let ns = NnueSquare::from_index(sq.to_index());
+                state.add(NnueColor::White, np, nc, ns);
+                state.add(NnueColor::Black, np, nc, ns);
+            }
+        }
+    }
+    let stm = if board.side_to_move() == chess::Color::White { NnueColor::White } else { NnueColor::Black };
+    state.activate(stm)[0] / 16
 }
 
 fn main() {
@@ -1394,6 +1439,12 @@ impl RustAlphaBetaEngine {
             return cached.score;
         }
 
+        // NNUE evaluation — replaces HCE
+        let score = nnue_evaluate(board);
+        self.eval_cache[eval_idx] = EvalCacheEntry { key: board_key, score };
+        return score;
+
+        #[allow(unreachable_code)]
         let phase = game_phase(board);
         let endgame = phase <= 6;
         let mut white_mg = 0;
