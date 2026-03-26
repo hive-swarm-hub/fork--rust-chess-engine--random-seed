@@ -35,3 +35,4 @@ d40e4af	2718.3	10	discard	ProbCut depth>=5 beta+200-50*improving (regressed -41,
 2584a61	2924.3	10	discard	NNUE via nnue-rs HalfKP (equal to best 2924.3, 5W/3D/2L, very promising)
 6a9afad	3037.3	204	keep	NNUE via nnue-rs HalfKP + contempt=0 + aspiration=30 + IIR, SPRT 144W/27D/33L NEW HIGH
 421a6df	3048.9	193	keep	eval cache 512K->2M on NNUE base, SPRT 137W/29D/27L +11.6 ELO
+8398a62	3125.9	207	keep	fix NNUE scaling to centipawns, SPRT 165W/20D/22L +77 ELO
