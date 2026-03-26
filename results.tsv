@@ -29,3 +29,4 @@ efcf3a7	2881.7	10	discard	verification run #2: same code, 5W/2D/3L (below best 2
 1d082cc	2718.3	10	discard	ID time threshold 50%->67% (regressed -206, 4W/0D/6L, lost draws)
 9f657d9	2718.3	10	discard	verification run #3: 3W/2D/5L (below best 2924.3)
 7de82b0	2718.3	10	discard	verification run #4: 4W/0D/6L (below best 2924.3)
+7a714cd	2525.9	10	discard	improving-aware pruning: RFP/NMP/LMP (regressed -234, LMP 2/3 too aggressive)
