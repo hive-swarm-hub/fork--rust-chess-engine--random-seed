@@ -153,7 +153,7 @@ async def main(step):
         schema={"best_elo": "float", "setup_ok": "bool", "message": "str"},
     )
 
-    best_elo = setup["best_elo"]
+    best_elo = 2600.0  # baseline floor — ignore historical results.tsv noise
     parent_sha = "none"
     iteration = 0
 

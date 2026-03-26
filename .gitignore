@@ -11,5 +11,17 @@ eval/games.pgn
 # Results tracking (not committed per task spec)
 results.tsv
 
+# Claude Code settings and auto-run IPC state
+.claude/
+
+# Auto-run state files
+.auto.pid
+auto-state.json
+auto.log
+run.log
+
+# Python cache
+__pycache__/
+
 # OS files
 .DS_Store
