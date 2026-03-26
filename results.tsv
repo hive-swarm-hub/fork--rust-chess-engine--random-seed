@@ -20,3 +20,4 @@ dc291ee	2760.4	10	keep	VERIFICATION: same code, no changes. 9W/1D/0L confirms ~2
 db7cfbc	2718.3	10	keep	aspiration window 40->30cp (matching top hive run e486)
 073abe7	2675.7	10	discard	LMP limits to sijun-bot config d1=9/d2=14/d3=22/d4=32/d5=45/d6+=MAX (regressed -43, more permissive pruning not better)
 5c5f992	2759.5	10	keep	remove contempt: CONTEMPT=0, draws/reps return DRAW_SCORE (+41 ELO)
+ae8a57b	2759.5	10	discard	remove mop-up eval (equal, not improved)
