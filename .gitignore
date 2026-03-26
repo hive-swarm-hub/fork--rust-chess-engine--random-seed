@@ -19,6 +19,13 @@ results.tsv
 auto-state.json
 auto.log
 run.log
+run2.log
+run3.log
+loom.log
+
+# Program file (don't let git reset clobber it)
+program.py
+program.md
 
 # Python cache
 __pycache__/
